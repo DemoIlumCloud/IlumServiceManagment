@@ -48,5 +48,16 @@ class SparkInteractiveExample(IlumJob):
         for c, v in null_counts.items():
             report_lines.append(f"  {c}: {v}")
 
+        # List other tables in the current database
+        current_db = spark.catalog.currentDatabase()
+        report_lines.append(f"Tables in database '{current_db}':")
+        tables = spark.catalog.listTables(current_db)
+        other_tables = [t.name for t in tables if t.name != table_name]
+        if other_tables:
+            for tname in other_tables:
+                report_lines.append(f"  {tname}")
+        else:
+            report_lines.append("  (no other tables)")
+        
         return "\n".join(report_lines)
   
