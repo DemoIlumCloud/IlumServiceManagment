@@ -1,0 +1,85 @@
+name: Deploy ILUM Group
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check if group ILUM_DEMO_SERVICE exists
+        id: check_group
+        run: |
+          echo "Checking if group ILUM_DEMO_SERVICE exists..."
+          
+          RESPONSE=$(curl -s -w "\nHTTP_STATUS:%{http_code}" http://ilum-core.ilum.svc.cluster.local:9888/api/v1/group)
+          HTTP_STATUS=$(echo "$RESPONSE" | grep HTTP_STATUS | cut -d':' -f2)
+          BODY=$(echo "$RESPONSE" | sed '/HTTP_STATUS/d')
+          
+          echo "HTTP Status: $HTTP_STATUS"
+          echo "Response Body: $BODY"
+          
+          if [ "$HTTP_STATUS" -ne 200 ]; then
+            echo "Error: API request failed with status $HTTP_STATUS"
+            exit 1
+          fi
+          
+          GROUP_ID=$(echo "$BODY" | jq -r '.content[] | select(.name=="ILUM_DEMO_SERVICE") | .id')
+          
+          if [ -n "$GROUP_ID" ] && [ "$GROUP_ID" != "null" ]; then
+            echo "Group ILUM_DEMO_SERVICE found with ID: $GROUP_ID"
+            echo "GROUP_ID=$GROUP_ID" >> $GITHUB_OUTPUT
+            echo "GROUP_EXISTS=true" >> $GITHUB_OUTPUT
+          else
+            echo "Group ILUM_DEMO_SERVICE does not exist."
+            echo "GROUP_EXISTS=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Delete existing group
+        if: steps.check_group.outputs.GROUP_EXISTS == 'true'
+        run: |
+          GROUP_ID="${{ steps.check_group.outputs.GROUP_ID }}"
+          echo "Stopping and deleting group ILUM_DEMO_SERVICE (ID: $GROUP_ID)..."
+          
+          curl -s -X POST http://ilum-core.ilum.svc.cluster.local:9888/api/v1/group/$GROUP_ID/stop
+          
+          RESPONSE=$(curl -s -X DELETE -w "\nHTTP_STATUS:%{http_code}" http://ilum-core.ilum.svc.cluster.local:9888/api/v1/group/$GROUP_ID)
+          HTTP_STATUS=$(echo "$RESPONSE" | grep HTTP_STATUS | cut -d':' -f2)
+          
+          if [ "$HTTP_STATUS" -ne 200 ]; then
+            echo "Error: Failed to delete group (Status: $HTTP_STATUS)"
+            exit 1
+          fi
+          
+          echo "Group ILUM_DEMO_SERVICE deleted successfully."
+
+      - name: Create new group
+        run: |
+          echo "Creating group ILUM_DEMO_SERVICE with service.py..."
+          
+          RESPONSE=$(curl -s -X POST \
+            -F "name=ILUM_DEMO_SERVICE" \
+            -F "pyFiles=@service.py" \
+            -F "clusterName=default" \
+            -F "language=PYTHON" \
+            -w "\nHTTP_STATUS:%{http_code}" \
+            http://ilum-core.ilum.svc.cluster.local:9888/api/v1/group)
+          
+          HTTP_STATUS=$(echo "$RESPONSE" | grep HTTP_STATUS | cut -d':' -f2)
+          BODY=$(echo "$RESPONSE" | sed '/HTTP_STATUS/d')
+          
+          echo "HTTP Status: $HTTP_STATUS"
+          echo "Response Body: $BODY"
+          
+          if [ "$HTTP_STATUS" -ne 200 ]; then
+            echo "Error: Failed to create group (Status: $HTTP_STATUS)"
+            exit 1
+          fi
+          
+          GROUP_ID=$(echo "$BODY" | jq -r '.groupId // empty')
+          echo "Group ILUM_DEMO_SERVICE created successfully with ID: $GROUP_ID"
